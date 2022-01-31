@@ -7,10 +7,10 @@ Manpulate ast tree like `sed`.
 Using `sed`-like grammer to replace `puts` argument.
 
 ```bash
-$ cargo run -- /(call_expression
+$ cargo run -- '/(call_expression
   function: (identifier) @the-function
   arguments: (argument_list (_) @tbr)
-  (#eq? @the-function "puts"))/"Just Monika"/ ./example/source_code.c
+  (#eq? @the-function "puts"))/"Just Monika"/' ./example/source_code.c
 ```
 
 ![Example](./example/Screenshot.png)
