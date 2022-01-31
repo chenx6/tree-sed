@@ -1,0 +1,15 @@
+[package]
+name = "tree-sed"
+version = "0.1.0"
+edition = "2021"
+description = "A alternative sed implementation by using tree-sitter"
+readme = "README.md"
+license = "LGPL-2.1-or-later"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tree-sitter = "0.20.2"
+tree-sitter-c = "0.20.1"
+anyhow = "1.0"
+clap = { version = "3.0.10" }
