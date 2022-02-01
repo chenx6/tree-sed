@@ -178,11 +178,14 @@ fn print_node(
 
 /// Get script's ast and execute command in script
 fn execute_script(
-    tree: Tree,
     parser: &mut Parser,
     script: Script,
     source_code: &mut String,
 ) -> anyhow::Result<()> {
+    // Parse code
+    let tree = parser
+        .parse(source_code.clone(), None)
+        .context("Failed to parse source code")?;
     let root_node = tree.root_node();
     match script.command {
         's' => {
@@ -203,33 +206,24 @@ fn execute_script(
                 replace_table,
             )?;
         }
-        'd' => {
+        cmd @ ('d' | 'p' | 'a') => {
             let pattern = match script.address {
                 Some(Address::Pattern(p)) => p,
-                _ => return Err(anyhow::format_err!("missing pattern in d command")),
+                _ => return Err(anyhow::format_err!("missing pattern in {} command", cmd)),
             };
             let mut node_map = execute_query(pattern, &source_code, root_node)?;
-            delete_node(tree.clone(), parser, &mut node_map, source_code)?;
-        }
-        'p' => {
-            let pattern = match script.address {
-                Some(Address::Pattern(p)) => p,
-                _ => return Err(anyhow::format_err!("missing pattern in d command")),
-            };
-            let mut node_map = execute_query(pattern, &source_code, root_node)?;
-            print_node(&mut node_map, source_code)?;
-        }
-        'a' => {
-            let pattern = match script.address {
-                Some(Address::Pattern(p)) => p,
-                _ => return Err(anyhow::format_err!("missing pattern in a command")),
-            };
-            let content = match script.options {
-                Some(Options::A(ACommandOptions { content })) => content,
-                _ => return Err(anyhow::format_err!("missing content in a command")),
-            };
-            let mut node_map = execute_query(pattern, &source_code, root_node)?;
-            append_content(tree.clone(), parser, &mut node_map, source_code, content)?;
+            match cmd {
+                'd' => delete_node(tree.clone(), parser, &mut node_map, source_code)?,
+                'p' => print_node(&mut node_map, source_code)?,
+                'a' => {
+                    let content = match script.options {
+                        Some(Options::A(ACommandOptions { content })) => content,
+                        _ => return Err(anyhow::format_err!("missing content in a command")),
+                    };
+                    append_content(tree.clone(), parser, &mut node_map, source_code, content)?
+                }
+                _ => (),
+            }
         }
         _ => todo!("More command"),
     }
@@ -264,12 +258,8 @@ fn main() -> anyhow::Result<()> {
     // Init Parser
     let mut parser = Parser::new();
     parser.set_language(language())?;
-    // Parse code
-    let tree = parser
-        .parse(source_code.clone(), None)
-        .context("Failed to parse source code")?;
     // Start executing command
-    execute_script(tree, &mut parser, script, &mut source_code)?;
+    execute_script(&mut parser, script, &mut source_code)?;
     match matches.occurrences_of("in-place") {
         0 => println!("{}", source_code),
         1 => {
