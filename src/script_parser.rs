@@ -1,7 +1,13 @@
 use anyhow::{Context, Result};
 
+#[derive(Debug, PartialEq)]
+pub enum Address {
+    Pattern(String),
+    Range(u32, u32),
+}
+
 pub struct Script {
-    pub address: Option<(u32, u32)>,
+    pub address: Option<Address>,
     pub command: Option<char>,
     pub placeholder: Option<String>,
     pub patten: Option<String>,
@@ -123,11 +129,11 @@ impl Tokenizer {
 /// Parse sed script with a hand-written top-down parser
 pub fn parse(script: &str) -> Result<Script> {
     // TODO parse more sed script
-    // Parse "1,2s/regex/replace/g"
+    // Script format: [addr]X[options]
     let mut tokenizer = Tokenizer::new(script.to_string()).context("Fail to tokenizer [SCRIPT]")?;
     let mut token = tokenizer.get_token();
     // Parse address (Optional)
-    let (start, end) = match token {
+    let address = match token {
         Some(Token::Number(start)) => {
             if let Some(Token::Char(ch)) = tokenizer.get_token() {
                 if ch != ',' {
@@ -139,9 +145,16 @@ pub fn parse(script: &str) -> Result<Script> {
                 _ => return Err(anyhow::format_err!("Missing end address in [SCRIPT]")),
             };
             token = tokenizer.get_token();
-            (start, end)
+            Some(Address::Range(start, end))
         }
-        _ => (u32::MIN, u32::MAX),
+        Some(Token::Char(ch)) if ch == '/' => {
+            let pattern = tokenizer.get_token();
+            match pattern {
+                Some(Token::Symbol(s)) => Some(Address::Pattern(s)),
+                _ => return Err(anyhow::format_err!("address format error")),
+            }
+        }
+        _ => None,
     };
     // Parse command (Optional)
     let command = match token {
@@ -169,19 +182,19 @@ pub fn parse(script: &str) -> Result<Script> {
         }
     }
     let patten = match tokenizer.get_sym('/') {
-        Some(Token::Symbol(patten)) => patten,
-        _ => return Err(anyhow::format_err!("Missing patten")),
+        Some(Token::Symbol(patten)) => Some(patten),
+        _ => None,
     };
     let replace = match tokenizer.get_sym('/') {
-        Some(Token::Symbol(replace)) => replace,
-        _ => return Err(anyhow::format_err!("Missing replace")),
+        Some(Token::Symbol(replace)) => Some(replace),
+        _ => None,
     };
     Ok(Script {
-        address: Some((start, end)),
+        address,
         command,
         placeholder,
-        patten: Some(patten),
-        replace: Some(replace),
+        patten,
+        replace,
     })
 }
 
@@ -207,7 +220,7 @@ mod test {
 
     #[test]
     fn test_basic_parse() {
-        let result = parse("/aaa/bbb/").unwrap();
+        let result = parse("s/aaa/bbb/").unwrap();
         assert_eq!(result.patten, Some(String::from("aaa")));
         assert_eq!(result.replace, Some(String::from("bbb")));
     }
@@ -215,7 +228,7 @@ mod test {
     #[test]
     fn test_address_parse() {
         let result = parse("1,2s/aaa/bbb/").unwrap();
-        assert_eq!(result.address, Some((1, 2)));
+        assert_eq!(result.address, Some(Address::Range(1, 2)));
         assert_eq!(result.command, Some('s'));
         assert_eq!(result.patten, Some(String::from("aaa")));
         assert_eq!(result.replace, Some(String::from("bbb")));
@@ -224,7 +237,7 @@ mod test {
     #[test]
     fn test_extend_parse() {
         let result = parse("1,2s@placeholder/aaa/bbb/").unwrap();
-        assert_eq!(result.address, Some((1, 2)));
+        assert_eq!(result.address, Some(Address::Range(1, 2)));
         assert_eq!(result.command, Some('s'));
         assert_eq!(result.placeholder, Some(String::from("placeholder")));
         assert_eq!(result.patten, Some(String::from("aaa")));
@@ -232,10 +245,19 @@ mod test {
     }
 
     #[test]
+    fn test_patten_address() {
+        let result = parse("/wow/").unwrap();
+        assert_eq!(result.address, Some(Address::Pattern(String::from("wow"))));
+    }
+
+    #[test]
     fn test_tree_sitter_query() {
-        let query = r#"/(argument_list (_) @tbr)/"Just Monika"/"#;
+        let query = r#"s/(argument_list (_) @tbr)/"Just Monika"/"#;
         let result = parse(query).unwrap();
-        assert_eq!(result.patten, Some(String::from("(argument_list (_) @tbr)")));
+        assert_eq!(
+            result.patten,
+            Some(String::from("(argument_list (_) @tbr)"))
+        );
         assert_eq!(result.replace, Some(String::from("\"Just Monika\"")));
     }
 }
