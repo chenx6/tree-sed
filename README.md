@@ -7,7 +7,7 @@ Manpulate ast tree like `sed`.
 Using `sed`-like grammer to replace `puts` argument.
 
 ```bash
-$ cargo run -- '/(call_expression
+$ cargo run -- 's/(call_expression
   function: (identifier) @the-function
   arguments: (argument_list (_) @tbr)
   (#eq? @the-function "puts"))/"Just Monika"/' ./example/source_code.c
@@ -20,9 +20,9 @@ $ cargo run -- '/(call_expression
 - [ ] Implement more argument to compatible to `sed`
 - [ ] Implement more sed script's function
   - [ ] `s` command: `&` and `\1 \2 ...`, `g` option
-  - [ ] `a` command: append content
-  - [ ] `d` command: delete content
-  - [ ] `p` command: print content
+  - [x] `a` command: append content
+  - [x] `d` command: delete content
+  - [x] `p` command: print content
 - [ ] Better document
 
 # Acknowledgement

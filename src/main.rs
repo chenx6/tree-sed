@@ -11,7 +11,7 @@ use tree_sitter_c::language;
 
 mod script_parser;
 
-use script_parser::parse;
+use script_parser::{parse, ACommandOptions, Address, Options, Script};
 
 /// Execute query based on `query_patten` and `source_code`
 fn execute_query<'a>(
@@ -41,6 +41,22 @@ fn execute_query<'a>(
     Ok(node_map)
 }
 
+/// Calculate edit position
+fn calculate_edit(node: &Node, value: &String) -> InputEdit {
+    let start_byte = node.start_byte();
+    let new_end_byte = start_byte + value.len();
+    let start_position = node.start_position();
+    let new_end_position = Point::new(start_position.row, start_position.column + value.len());
+    InputEdit {
+        start_byte,
+        old_end_byte: node.end_byte(),
+        new_end_byte,
+        start_position,
+        old_end_position: node.end_position(),
+        new_end_position,
+    }
+}
+
 /// Replace source code with `replace_table`
 fn replace_source(
     tree: Tree,
@@ -63,20 +79,7 @@ fn replace_source(
             // Replace in source code
             // end_byte points to tail + 1
             source_code.replace_range(node.start_byte()..node.end_byte(), value);
-            // Calculate its edit position
-            let start_byte = node.start_byte();
-            let new_end_byte = start_byte + value.len();
-            let start_position = node.start_position();
-            let new_end_position =
-                Point::new(start_position.row, start_position.column + value.len());
-            let input_edit = InputEdit {
-                start_byte,
-                old_end_byte: node.end_byte(),
-                new_end_byte,
-                start_position,
-                old_end_position: node.end_position(),
-                new_end_position,
-            };
+            let input_edit = calculate_edit(node, value);
             all_edit.push(input_edit);
             // Edit and parse after modifying source code
             edit_tree.edit(&input_edit);
@@ -84,6 +87,151 @@ fn replace_source(
                 .parse(&source_code, Some(&edit_tree))
                 .context("Re-generate tree fail")?;
         }
+    }
+    Ok(())
+}
+
+/// Delete matched node in source code
+fn delete_node(
+    tree: Tree,
+    parser: &mut Parser,
+    node_map: &mut HashMap<String, Vec<Node>>,
+    source_code: &mut String,
+) -> anyhow::Result<()> {
+    let mut edit_tree = tree;
+    let mut all_edit: Vec<InputEdit> = Vec::new();
+    let empty_str = String::from("");
+    for (_, nodes) in node_map.iter_mut() {
+        for node in nodes {
+            for edit in &all_edit {
+                node.edit(edit);
+            }
+            source_code.replace_range(node.start_byte()..node.end_byte(), &empty_str);
+            let input_edit = calculate_edit(node, &empty_str);
+            all_edit.push(input_edit);
+            // Edit and parse after modifying source code
+            edit_tree.edit(&input_edit);
+            edit_tree = parser
+                .parse(&source_code, Some(&edit_tree))
+                .context("Re-generate tree fail")?;
+        }
+    }
+    Ok(())
+}
+
+fn append_content(
+    tree: Tree,
+    parser: &mut Parser,
+    node_map: &mut HashMap<String, Vec<Node>>,
+    source_code: &mut String,
+    content: String,
+) -> anyhow::Result<()> {
+    let mut edit_tree = tree;
+    let mut all_edit = vec![];
+    for nodes in node_map.values_mut() {
+        for node in nodes {
+            for edit in &all_edit {
+                node.edit(edit);
+            }
+            // Insert `content`
+            source_code.insert_str(node.end_byte(), &content);
+            let end_byte = node.end_byte();
+            let end_pos = node.end_position();
+            let input_edit = InputEdit {
+                start_byte: end_byte,
+                old_end_byte: end_byte,
+                new_end_byte: end_byte + content.len(),
+                start_position: end_pos,
+                old_end_position: end_pos,
+                new_end_position: Point {
+                    row: end_pos.row,
+                    column: end_pos.row + content.len(),
+                },
+            };
+            all_edit.push(input_edit);
+            edit_tree.edit(&input_edit);
+            edit_tree = parser
+                .parse(&source_code, Some(&edit_tree))
+                .context("Re-generate tree fail")?;
+        }
+    }
+    Ok(())
+}
+
+/// Print matched node
+fn print_node(
+    node_map: &mut HashMap<String, Vec<Node>>,
+    source_code: &mut String,
+) -> anyhow::Result<()> {
+    let mut print_content: Vec<&str> = vec![];
+    for nodes in node_map.values() {
+        for node in nodes {
+            let matched = source_code
+                .get(node.start_byte()..node.end_byte())
+                .context("get range fail")?;
+            print_content.push(matched);
+        }
+    }
+    *source_code = print_content.join("\n");
+    Ok(())
+}
+
+/// Get script's ast and execute command in script
+fn execute_script(
+    tree: Tree,
+    parser: &mut Parser,
+    script: Script,
+    source_code: &mut String,
+) -> anyhow::Result<()> {
+    let root_node = tree.root_node();
+    match script.command {
+        's' => {
+            let options = match script.options {
+                Some(Options::S(options)) => options,
+                _ => return Err(anyhow::format_err!("missing `s` command's options")),
+            };
+            let mut node_map = execute_query(options.pattern, &source_code, root_node)?;
+            // Re-generate syntax tree
+            let mut replace_table: HashMap<String, String> = HashMap::new();
+            let placeholder = options.placeholder.unwrap_or(String::from("tbr"));
+            replace_table.insert(placeholder, options.replace);
+            replace_source(
+                tree.clone(),
+                parser,
+                &mut node_map,
+                source_code,
+                replace_table,
+            )?;
+        }
+        'd' => {
+            let pattern = match script.address {
+                Some(Address::Pattern(p)) => p,
+                _ => return Err(anyhow::format_err!("missing pattern in d command")),
+            };
+            let mut node_map = execute_query(pattern, &source_code, root_node)?;
+            delete_node(tree.clone(), parser, &mut node_map, source_code)?;
+        }
+        'p' => {
+            let pattern = match script.address {
+                Some(Address::Pattern(p)) => p,
+                _ => return Err(anyhow::format_err!("missing pattern in d command")),
+            };
+            let mut node_map = execute_query(pattern, &source_code, root_node)?;
+            print_node(&mut node_map, source_code)?;
+        }
+        'a' => {
+            let pattern = match script.address {
+                Some(Address::Pattern(p)) => p,
+                _ => return Err(anyhow::format_err!("missing pattern in a command")),
+            };
+            let content = match script.options {
+                Some(Options::A(ACommandOptions { content })) => content,
+                _ => return Err(anyhow::format_err!("missing content in a command")),
+            };
+            let mut node_map = execute_query(pattern, &source_code, root_node)?;
+            append_content(tree.clone(), parser, &mut node_map, source_code, content)?;
+        }
+        _ => todo!("More command"),
     }
     Ok(())
 }
@@ -120,22 +268,8 @@ fn main() -> anyhow::Result<()> {
     let tree = parser
         .parse(source_code.clone(), None)
         .context("Failed to parse source code")?;
-    let root_node = tree.root_node();
-    // Start query
-    let patten = script.patten.context("Missing query patten in [SCRIPT]")?;
-    let mut node_map = execute_query(patten, &source_code, root_node)?;
-    // Re-generate syntax tree
-    let mut replace_table: HashMap<String, String> = HashMap::new();
-    let placeholder = script.placeholder.unwrap_or(String::from("tbr"));
-    let replace = script.replace.context("Missing replace in [SCRIPT]")?;
-    replace_table.insert(placeholder, replace);
-    replace_source(
-        tree.clone(),
-        &mut parser,
-        &mut node_map,
-        &mut source_code,
-        replace_table,
-    )?;
+    // Start executing command
+    execute_script(tree, &mut parser, script, &mut source_code)?;
     match matches.occurrences_of("in-place") {
         0 => println!("{}", source_code),
         1 => {
