@@ -19,3 +19,13 @@ $ cargo run -- '/(call_expression
 
 - [ ] Implement more argument to compatible to `sed`
 - [ ] Implement more sed script's function
+  - [ ] `s` command: `&` and `\1 \2 ...`, `g` option
+  - [ ] `a` command: append content
+  - [ ] `d` command: delete content
+  - [ ] `p` command: print content
+- [ ] Better document
+
+# Acknowledgement
+
+- [tree-sitter/tree-sitter](https://github.com/tree-sitter/tree-sitter)
+- [sed, a stream editor](https://www.gnu.org/software/sed/manual/sed.html)
