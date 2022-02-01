@@ -11,7 +11,7 @@ use tree_sitter_c::language;
 
 mod script_parser;
 
-use script_parser::{parse, Options, Script};
+use script_parser::{parse, Address, Options, Script};
 
 /// Execute query based on `query_patten` and `source_code`
 fn execute_query<'a>(
@@ -41,6 +41,22 @@ fn execute_query<'a>(
     Ok(node_map)
 }
 
+/// Calculate edit position
+fn calculate_edit(node: &Node, value: &String) -> InputEdit {
+    let start_byte = node.start_byte();
+    let new_end_byte = start_byte + value.len();
+    let start_position = node.start_position();
+    let new_end_position = Point::new(start_position.row, start_position.column + value.len());
+    InputEdit {
+        start_byte,
+        old_end_byte: node.end_byte(),
+        new_end_byte,
+        start_position,
+        old_end_position: node.end_position(),
+        new_end_position,
+    }
+}
+
 /// Replace source code with `replace_table`
 fn replace_source(
     tree: Tree,
@@ -63,20 +79,35 @@ fn replace_source(
             // Replace in source code
             // end_byte points to tail + 1
             source_code.replace_range(node.start_byte()..node.end_byte(), value);
-            // Calculate its edit position
-            let start_byte = node.start_byte();
-            let new_end_byte = start_byte + value.len();
-            let start_position = node.start_position();
-            let new_end_position =
-                Point::new(start_position.row, start_position.column + value.len());
-            let input_edit = InputEdit {
-                start_byte,
-                old_end_byte: node.end_byte(),
-                new_end_byte,
-                start_position,
-                old_end_position: node.end_position(),
-                new_end_position,
-            };
+            let input_edit = calculate_edit(node, value);
+            all_edit.push(input_edit);
+            // Edit and parse after modifying source code
+            edit_tree.edit(&input_edit);
+            edit_tree = parser
+                .parse(&source_code, Some(&edit_tree))
+                .context("Re-generate tree fail")?;
+        }
+    }
+    Ok(())
+}
+
+/// Delete matched node in source code
+fn delete_node(
+    tree: Tree,
+    parser: &mut Parser,
+    node_map: &mut HashMap<String, Vec<Node>>,
+    source_code: &mut String,
+) -> anyhow::Result<()> {
+    let mut edit_tree = tree;
+    let mut all_edit: Vec<InputEdit> = Vec::new();
+    let empty_str = String::from("");
+    for (_, nodes) in node_map.iter_mut() {
+        for node in nodes {
+            for edit in &all_edit {
+                node.edit(edit);
+            }
+            source_code.replace_range(node.start_byte()..node.end_byte(), &empty_str);
+            let input_edit = calculate_edit(node, &empty_str);
             all_edit.push(input_edit);
             // Edit and parse after modifying source code
             edit_tree.edit(&input_edit);
@@ -95,13 +126,14 @@ fn execute_script(
     script: Script,
     source_code: &mut String,
 ) -> anyhow::Result<()> {
+    let root_node = tree.root_node();
     match script.command {
         's' => {
             let options = match script.options {
                 Some(Options::S(options)) => options,
                 _ => return Err(anyhow::format_err!("missing `s` command's options")),
             };
-            let mut node_map = execute_query(options.pattern, &source_code, tree.root_node())?;
+            let mut node_map = execute_query(options.pattern, &source_code, root_node)?;
             // Re-generate syntax tree
             let mut replace_table: HashMap<String, String> = HashMap::new();
             let placeholder = options.placeholder.unwrap_or(String::from("tbr"));
@@ -113,6 +145,14 @@ fn execute_script(
                 source_code,
                 replace_table,
             )?;
+        }
+        'd' => {
+            let pattern = match script.address {
+                Some(Address::Pattern(p)) => p,
+                _ => return Err(anyhow::format_err!("missing pattern in d command")),
+            };
+            let mut node_map = execute_query(pattern, &source_code, root_node)?;
+            delete_node(tree.clone(), parser, &mut node_map, source_code)?;
         }
         _ => todo!("More command"),
     }
