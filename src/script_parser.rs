@@ -158,15 +158,29 @@ pub fn parse(script: &str) -> Result<Script> {
             Some(Address::Range(start, end))
         }
         Some(Token::Char(ch)) if ch == '/' => {
-            let pattern = tokenizer.get_token();
+            let pattern = tokenizer.get_sym('/');
             match pattern {
-                Some(Token::Symbol(s)) => Some(Address::Pattern(s)),
+                Some(Token::Symbol(s)) => {
+                    token = tokenizer.get_token();
+                    Some(Address::Pattern(s))
+                }
                 _ => return Err(anyhow::format_err!("address format error")),
             }
         }
         _ => None,
     };
-    // Parse command (Optional)
+    // Parse command
+    // Eat white space between address and command
+    if let Some(Token::Char(ch)) = token {
+        if ch == ' ' {
+            while let Some(next) = tokenizer.get_token() {
+                if next != Token::Char(' ') {
+                    token = Some(next);
+                    break;
+                }
+            }
+        }
+    }
     let command = match token {
         Some(Token::Symbol(s)) => {
             let next_ch = s.chars().next().context("missing command")?;
@@ -286,12 +300,6 @@ mod test {
     }
 
     #[test]
-    fn test_patten_address() {
-        let result = parse("/wow/").unwrap();
-        assert_eq!(result.address, Some(Address::Pattern(String::from("wow"))));
-    }
-
-    #[test]
     fn test_tree_sitter_query() {
         let query = r#"s/(argument_list (_) @tbr)/"Just Monika"/"#;
         let result = parse(query).unwrap();
@@ -304,5 +312,18 @@ mod test {
             }
             _ => panic!("parse fail"),
         }
+    }
+
+    #[test]
+    fn test_pattern_address() {
+        let query = "/(call_expression function: (identifier @func) (#eq? @func \"puts\"))/ d";
+        let result = parse(query).unwrap();
+        assert_eq!(result.command, 'd');
+        assert_eq!(
+            result.address,
+            Some(Address::Pattern(String::from(
+                "(call_expression function: (identifier @func) (#eq? @func \"puts\"))"
+            )))
+        );
     }
 }
