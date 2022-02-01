@@ -11,7 +11,7 @@ use tree_sitter_c::language;
 
 mod script_parser;
 
-use script_parser::{parse, Options, SCommandOptions};
+use script_parser::{parse, Options, Script};
 
 /// Execute query based on `query_patten` and `source_code`
 fn execute_query<'a>(
@@ -88,6 +88,37 @@ fn replace_source(
     Ok(())
 }
 
+/// Get script's ast and execute command in script
+fn execute_script(
+    tree: Tree,
+    parser: &mut Parser,
+    script: Script,
+    source_code: &mut String,
+) -> anyhow::Result<()> {
+    match script.command {
+        's' => {
+            let options = match script.options {
+                Some(Options::S(options)) => options,
+                _ => return Err(anyhow::format_err!("missing `s` command's options")),
+            };
+            let mut node_map = execute_query(options.pattern, &source_code, tree.root_node())?;
+            // Re-generate syntax tree
+            let mut replace_table: HashMap<String, String> = HashMap::new();
+            let placeholder = options.placeholder.unwrap_or(String::from("tbr"));
+            replace_table.insert(placeholder, options.replace);
+            replace_source(
+                tree.clone(),
+                parser,
+                &mut node_map,
+                source_code,
+                replace_table,
+            )?;
+        }
+        _ => todo!("More command"),
+    }
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     // TODO add more options to compatible with sed
     let app = App::new("tree-sed")
@@ -120,28 +151,8 @@ fn main() -> anyhow::Result<()> {
     let tree = parser
         .parse(source_code.clone(), None)
         .context("Failed to parse source code")?;
-    let root_node = tree.root_node();
-    // Start query
-    let (placeholder, pattern, replace) = match script.options {
-        Some(Options::S(SCommandOptions {
-            placeholder,
-            pattern,
-            replace,
-        })) => (placeholder, pattern, replace),
-        _ => return Err(anyhow::format_err!("missing `s` command's options")),
-    };
-    let mut node_map = execute_query(pattern, &source_code, root_node)?;
-    // Re-generate syntax tree
-    let mut replace_table: HashMap<String, String> = HashMap::new();
-    let placeholder = placeholder.unwrap_or(String::from("tbr"));
-    replace_table.insert(placeholder, replace);
-    replace_source(
-        tree.clone(),
-        &mut parser,
-        &mut node_map,
-        &mut source_code,
-        replace_table,
-    )?;
+    // Start executing command
+    execute_script(tree, &mut parser, script, &mut source_code)?;
     match matches.occurrences_of("in-place") {
         0 => println!("{}", source_code),
         1 => {
