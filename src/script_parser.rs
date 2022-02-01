@@ -6,12 +6,22 @@ pub enum Address {
     Range(u32, u32),
 }
 
+pub struct SCommandOptions {
+    pub placeholder: Option<String>,
+    pub pattern: String,
+    pub replace: String,
+}
+
+pub enum Options {
+    S(SCommandOptions),
+}
+
+/// Simulate sed's command format
+/// [addr]command[options]
 pub struct Script {
     pub address: Option<Address>,
-    pub command: Option<char>,
-    pub placeholder: Option<String>,
-    pub patten: Option<String>,
-    pub replace: Option<String>,
+    pub command: char,
+    pub options: Option<Options>,
 }
 
 struct Reader {
@@ -159,42 +169,50 @@ pub fn parse(script: &str) -> Result<Script> {
     // Parse command (Optional)
     let command = match token {
         Some(Token::Symbol(s)) => {
-            let next_ch = s.chars().next();
+            let next_ch = s.chars().next().context("missing command")?;
             token = tokenizer.get_token();
             next_ch
         }
-        _ => None,
+        _ => return Err(anyhow::format_err!("missing command")),
     };
-    // Parse placeholder (Extend)
-    let placeholder = match token {
-        Some(Token::Char(ch)) if ch == '@' => match tokenizer.get_token() {
-            Some(Token::Symbol(s)) => {
-                token = tokenizer.get_token();
-                Some(s)
+    let options = match command {
+        's' => {
+            // Parse placeholder (Extend)
+            let placeholder = match token {
+                Some(Token::Char(ch)) if ch == '@' => match tokenizer.get_token() {
+                    Some(Token::Symbol(s)) => {
+                        token = tokenizer.get_token();
+                        Some(s)
+                    }
+                    _ => return Err(anyhow::format_err!("Missing placeholder")),
+                },
+                _ => None,
+            };
+            if let Some(Token::Char(ch)) = token {
+                if ch != '/' {
+                    return Err(anyhow::format_err!("Missing '/' in argument"));
+                }
             }
-            _ => return Err(anyhow::format_err!("Missing placeholder")),
-        },
-        _ => None,
-    };
-    if let Some(Token::Char(ch)) = token {
-        if ch != '/' {
-            return Err(anyhow::format_err!("Missing '/' in argument"));
+            let pattern = match tokenizer.get_sym('/') {
+                Some(Token::Symbol(patten)) => patten,
+                _ => return Err(anyhow::format_err!("missing pattern")),
+            };
+            let replace = match tokenizer.get_sym('/') {
+                Some(Token::Symbol(replace)) => replace,
+                _ => return Err(anyhow::format_err!("missing pattern")),
+            };
+            Some(Options::S(SCommandOptions {
+                placeholder,
+                pattern,
+                replace,
+            }))
         }
-    }
-    let patten = match tokenizer.get_sym('/') {
-        Some(Token::Symbol(patten)) => Some(patten),
-        _ => None,
-    };
-    let replace = match tokenizer.get_sym('/') {
-        Some(Token::Symbol(replace)) => Some(replace),
         _ => None,
     };
     Ok(Script {
         address,
         command,
-        placeholder,
-        patten,
-        replace,
+        options,
     })
 }
 
@@ -221,27 +239,50 @@ mod test {
     #[test]
     fn test_basic_parse() {
         let result = parse("s/aaa/bbb/").unwrap();
-        assert_eq!(result.patten, Some(String::from("aaa")));
-        assert_eq!(result.replace, Some(String::from("bbb")));
+        match result.options {
+            Some(Options::S(SCommandOptions {
+                pattern, replace, ..
+            })) => {
+                assert_eq!(pattern, String::from("aaa"));
+                assert_eq!(replace, String::from("bbb"));
+            }
+            _ => panic!("parse fail"),
+        }
     }
 
     #[test]
     fn test_address_parse() {
         let result = parse("1,2s/aaa/bbb/").unwrap();
         assert_eq!(result.address, Some(Address::Range(1, 2)));
-        assert_eq!(result.command, Some('s'));
-        assert_eq!(result.patten, Some(String::from("aaa")));
-        assert_eq!(result.replace, Some(String::from("bbb")));
+        assert_eq!(result.command, 's');
+        match result.options {
+            Some(Options::S(SCommandOptions {
+                pattern, replace, ..
+            })) => {
+                assert_eq!(pattern, String::from("aaa"));
+                assert_eq!(replace, String::from("bbb"));
+            }
+            _ => panic!("parse fail"),
+        }
     }
 
     #[test]
     fn test_extend_parse() {
         let result = parse("1,2s@placeholder/aaa/bbb/").unwrap();
         assert_eq!(result.address, Some(Address::Range(1, 2)));
-        assert_eq!(result.command, Some('s'));
-        assert_eq!(result.placeholder, Some(String::from("placeholder")));
-        assert_eq!(result.patten, Some(String::from("aaa")));
-        assert_eq!(result.replace, Some(String::from("bbb")));
+        assert_eq!(result.command, 's');
+        match result.options {
+            Some(Options::S(SCommandOptions {
+                placeholder,
+                pattern,
+                replace,
+            })) => {
+                assert_eq!(placeholder, Some(String::from("placeholder")));
+                assert_eq!(pattern, String::from("aaa"));
+                assert_eq!(replace, String::from("bbb"));
+            }
+            _ => panic!("parse fail"),
+        }
     }
 
     #[test]
@@ -254,10 +295,14 @@ mod test {
     fn test_tree_sitter_query() {
         let query = r#"s/(argument_list (_) @tbr)/"Just Monika"/"#;
         let result = parse(query).unwrap();
-        assert_eq!(
-            result.patten,
-            Some(String::from("(argument_list (_) @tbr)"))
-        );
-        assert_eq!(result.replace, Some(String::from("\"Just Monika\"")));
+        match result.options {
+            Some(Options::S(SCommandOptions {
+                pattern, replace, ..
+            })) => {
+                assert_eq!(pattern, String::from("(argument_list (_) @tbr)"));
+                assert_eq!(replace, String::from("\"Just Monika\""));
+            }
+            _ => panic!("parse fail"),
+        }
     }
 }

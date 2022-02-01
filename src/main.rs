@@ -11,7 +11,7 @@ use tree_sitter_c::language;
 
 mod script_parser;
 
-use script_parser::parse;
+use script_parser::{parse, Options, SCommandOptions};
 
 /// Execute query based on `query_patten` and `source_code`
 fn execute_query<'a>(
@@ -122,12 +122,18 @@ fn main() -> anyhow::Result<()> {
         .context("Failed to parse source code")?;
     let root_node = tree.root_node();
     // Start query
-    let patten = script.patten.context("Missing query patten in [SCRIPT]")?;
-    let mut node_map = execute_query(patten, &source_code, root_node)?;
+    let (placeholder, pattern, replace) = match script.options {
+        Some(Options::S(SCommandOptions {
+            placeholder,
+            pattern,
+            replace,
+        })) => (placeholder, pattern, replace),
+        _ => return Err(anyhow::format_err!("missing `s` command's options")),
+    };
+    let mut node_map = execute_query(pattern, &source_code, root_node)?;
     // Re-generate syntax tree
     let mut replace_table: HashMap<String, String> = HashMap::new();
-    let placeholder = script.placeholder.unwrap_or(String::from("tbr"));
-    let replace = script.replace.context("Missing replace in [SCRIPT]")?;
+    let placeholder = placeholder.unwrap_or(String::from("tbr"));
     replace_table.insert(placeholder, replace);
     replace_source(
         tree.clone(),
