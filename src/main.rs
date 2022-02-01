@@ -119,6 +119,24 @@ fn delete_node(
     Ok(())
 }
 
+/// Print matched node
+fn print_node(
+    node_map: &mut HashMap<String, Vec<Node>>,
+    source_code: &mut String,
+) -> anyhow::Result<()> {
+    let mut print_content: Vec<&str> = vec![];
+    for nodes in node_map.values() {
+        for node in nodes {
+            let matched = source_code
+                .get(node.start_byte()..node.end_byte())
+                .context("get range fail")?;
+            print_content.push(matched);
+        }
+    }
+    *source_code = print_content.join("\n");
+    Ok(())
+}
+
 /// Get script's ast and execute command in script
 fn execute_script(
     tree: Tree,
@@ -153,6 +171,14 @@ fn execute_script(
             };
             let mut node_map = execute_query(pattern, &source_code, root_node)?;
             delete_node(tree.clone(), parser, &mut node_map, source_code)?;
+        },
+        'p' => {
+            let pattern = match script.address {
+                Some(Address::Pattern(p)) => p,
+                _ => return Err(anyhow::format_err!("missing pattern in d command")),
+            };
+            let mut node_map = execute_query(pattern, &source_code, root_node)?;
+            print_node(&mut node_map, source_code)?;
         }
         _ => todo!("More command"),
     }
