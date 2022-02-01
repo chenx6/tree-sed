@@ -11,7 +11,7 @@ use tree_sitter_c::language;
 
 mod script_parser;
 
-use script_parser::{parse, Address, Options, Script};
+use script_parser::{parse, ACommandOptions, Address, Options, Script};
 
 /// Execute query based on `query_patten` and `source_code`
 fn execute_query<'a>(
@@ -119,6 +119,45 @@ fn delete_node(
     Ok(())
 }
 
+fn append_content(
+    tree: Tree,
+    parser: &mut Parser,
+    node_map: &mut HashMap<String, Vec<Node>>,
+    source_code: &mut String,
+    content: String,
+) -> anyhow::Result<()> {
+    let mut edit_tree = tree;
+    let mut all_edit = vec![];
+    for nodes in node_map.values_mut() {
+        for node in nodes {
+            for edit in &all_edit {
+                node.edit(edit);
+            }
+            // Insert `content`
+            source_code.insert_str(node.end_byte(), &content);
+            let end_byte = node.end_byte();
+            let end_pos = node.end_position();
+            let input_edit = InputEdit {
+                start_byte: end_byte,
+                old_end_byte: end_byte,
+                new_end_byte: end_byte + content.len(),
+                start_position: end_pos,
+                old_end_position: end_pos,
+                new_end_position: Point {
+                    row: end_pos.row,
+                    column: end_pos.row + content.len(),
+                },
+            };
+            all_edit.push(input_edit);
+            edit_tree.edit(&input_edit);
+            edit_tree = parser
+                .parse(&source_code, Some(&edit_tree))
+                .context("Re-generate tree fail")?;
+        }
+    }
+    Ok(())
+}
+
 /// Print matched node
 fn print_node(
     node_map: &mut HashMap<String, Vec<Node>>,
@@ -171,7 +210,7 @@ fn execute_script(
             };
             let mut node_map = execute_query(pattern, &source_code, root_node)?;
             delete_node(tree.clone(), parser, &mut node_map, source_code)?;
-        },
+        }
         'p' => {
             let pattern = match script.address {
                 Some(Address::Pattern(p)) => p,
@@ -179,6 +218,18 @@ fn execute_script(
             };
             let mut node_map = execute_query(pattern, &source_code, root_node)?;
             print_node(&mut node_map, source_code)?;
+        }
+        'a' => {
+            let pattern = match script.address {
+                Some(Address::Pattern(p)) => p,
+                _ => return Err(anyhow::format_err!("missing pattern in a command")),
+            };
+            let content = match script.options {
+                Some(Options::A(ACommandOptions { content })) => content,
+                _ => return Err(anyhow::format_err!("missing content in a command")),
+            };
+            let mut node_map = execute_query(pattern, &source_code, root_node)?;
+            append_content(tree.clone(), parser, &mut node_map, source_code, content)?;
         }
         _ => todo!("More command"),
     }

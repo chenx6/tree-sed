@@ -12,8 +12,13 @@ pub struct SCommandOptions {
     pub replace: String,
 }
 
+pub struct ACommandOptions {
+    pub content: String,
+}
+
 pub enum Options {
     S(SCommandOptions),
+    A(ACommandOptions),
 }
 
 /// Simulate sed's command format
@@ -127,12 +132,32 @@ impl Tokenizer {
                 _ => (),
             }
         }
-        let end_pos = self.pos();
-        let selected = match self.text.get(start_pos..end_pos - 1) {
+        let mut end_pos = self.pos();
+        // Because of the while loop consume the `split`,
+        // `end_pos` points to the `split`'s position + 1
+        // So, if `end_pos - 1` point to `split`, let end_pos forward 1 position
+        if self.text.chars().nth(end_pos - 1) == Some(split) {
+            end_pos -= 1;
+        }
+        let selected = match self.text.get(start_pos..end_pos) {
             Some(s) => s.to_string(),
             None => return None,
         };
         Some(Token::Symbol(selected))
+    }
+}
+
+// Consume white space between address and command
+fn consume_whitespace(token: &mut Option<Token>, tokenizer: &mut Tokenizer) {
+    if let Some(Token::Char(ch)) = token {
+        if *ch == ' ' {
+            while let Some(next) = tokenizer.get_token() {
+                if next != Token::Char(' ') {
+                    *token = Some(next);
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -170,17 +195,7 @@ pub fn parse(script: &str) -> Result<Script> {
         _ => None,
     };
     // Parse command
-    // Eat white space between address and command
-    if let Some(Token::Char(ch)) = token {
-        if ch == ' ' {
-            while let Some(next) = tokenizer.get_token() {
-                if next != Token::Char(' ') {
-                    token = Some(next);
-                    break;
-                }
-            }
-        }
-    }
+    consume_whitespace(&mut token, &mut tokenizer);
     let command = match token {
         Some(Token::Symbol(s)) => {
             let next_ch = s.chars().next().context("missing command")?;
@@ -189,6 +204,7 @@ pub fn parse(script: &str) -> Result<Script> {
         }
         _ => return Err(anyhow::format_err!("missing command")),
     };
+    // Parse options
     let options = match command {
         's' => {
             // Parse placeholder (Extend)
@@ -220,6 +236,24 @@ pub fn parse(script: &str) -> Result<Script> {
                 pattern,
                 replace,
             }))
+        }
+        'a' => {
+            consume_whitespace(&mut token, &mut tokenizer);
+            let content = match token {
+                Some(Token::Char('\\')) => {
+                    let next_line = tokenizer.get_token();
+                    if next_line != Some(Token::Char('\n')) {
+                        return Err(anyhow::format_err!("missing content in a command"));
+                    }
+                    match tokenizer.get_sym('\n') {
+                        Some(Token::Symbol(s)) => s,
+                        _ => return Err(anyhow::format_err!("missing content in a command")),
+                    }
+                }
+                Some(Token::Symbol(s)) => s,
+                _ => return Err(anyhow::format_err!("missing content in a command")),
+            };
+            Some(Options::A(ACommandOptions { content }))
         }
         _ => None,
     };
@@ -325,5 +359,29 @@ mod test {
                 "(call_expression function: (identifier @func) (#eq? @func \"puts\"))"
             )))
         );
+    }
+
+    #[test]
+    fn test_parse_append() {
+        let script = r#"/(call_expression)/ a text"#;
+        let result = parse(script).unwrap();
+        assert_eq!(result.command, 'a');
+        match result.options {
+            Some(Options::A(ACommandOptions { content })) => {
+                assert_eq!(content, String::from("text"))
+            }
+            _ => panic!(""),
+        }
+        // Second format
+        let script = r#"/(call_expression)/ a\
+a long long text"#;
+        let result = parse(script).unwrap();
+        assert_eq!(result.command, 'a');
+        match result.options {
+            Some(Options::A(ACommandOptions { content })) => {
+                assert_eq!(content, String::from("a long long text"))
+            }
+            _ => panic!(""),
+        }
     }
 }
