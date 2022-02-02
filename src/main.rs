@@ -131,6 +131,7 @@ fn append_content(
     node_map: &mut HashMap<String, Vec<Node>>,
     source_code: &mut String,
     content: String,
+    is_insert: bool,
 ) -> anyhow::Result<()> {
     let mut edit_tree = tree;
     let mut all_edit = vec![];
@@ -139,19 +140,22 @@ fn append_content(
             for edit in &all_edit {
                 node.edit(edit);
             }
-            // Insert `content`
-            source_code.insert_str(node.end_byte(), &content);
-            let end_byte = node.end_byte();
-            let end_pos = node.end_position();
+            // Modify position depends on insert or append data
+            let (mod_start_byte, mod_start_pos) = if is_insert == true {
+                (node.start_byte(), node.start_position())
+            } else {
+                (node.end_byte(), node.end_position())
+            };
+            source_code.insert_str(mod_start_byte, &content);
             let input_edit = InputEdit {
-                start_byte: end_byte,
-                old_end_byte: end_byte,
-                new_end_byte: end_byte + content.len(),
-                start_position: end_pos,
-                old_end_position: end_pos,
+                start_byte: mod_start_byte,
+                old_end_byte: mod_start_byte,
+                new_end_byte: mod_start_byte + content.len(),
+                start_position: mod_start_pos,
+                old_end_position: mod_start_pos,
                 new_end_position: Point {
-                    row: end_pos.row,
-                    column: end_pos.row + content.len(),
+                    row: mod_start_pos.row,
+                    column: mod_start_pos.row + content.len(),
                 },
             };
             all_edit.push(input_edit);
@@ -213,7 +217,7 @@ fn execute_script(
                 replace_table,
             )?;
         }
-        cmd @ ('d' | 'p' | 'a') => {
+        cmd @ ('d' | 'p' | 'a' | 'i') => {
             let pattern = match script.address {
                 Some(Address::Pattern(p)) => p,
                 _ => return Err(anyhow::format_err!("missing pattern in {} command", cmd)),
@@ -222,12 +226,19 @@ fn execute_script(
             match cmd {
                 'd' => delete_node(tree.clone(), parser, &mut node_map, source_code)?,
                 'p' => print_node(&mut node_map, source_code)?,
-                'a' => {
+                'a' | 'i' => {
                     let content = match script.options {
                         Some(Options::A(ACommandOptions { content })) => content,
                         _ => return Err(anyhow::format_err!("missing content in a command")),
                     };
-                    append_content(tree.clone(), parser, &mut node_map, source_code, content)?
+                    append_content(
+                        tree.clone(),
+                        parser,
+                        &mut node_map,
+                        source_code,
+                        content,
+                        if cmd == 'a' { false } else { true },
+                    )?
                 }
                 _ => (),
             }
