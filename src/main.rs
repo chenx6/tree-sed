@@ -6,8 +6,13 @@ use std::{
 
 use anyhow::Context;
 use clap::{arg, App, Arg};
-use tree_sitter::{InputEdit, Node, Parser, Point, Query, QueryCursor, Tree};
-use tree_sitter_c::language;
+use tree_sitter::{InputEdit, Language, Node, Parser, Point, Query, QueryCursor, Tree};
+#[cfg(feature = "c")]
+use tree_sitter_c::language as c_language;
+#[cfg(feature = "cpp")]
+use tree_sitter_cpp::language as cpp_language;
+#[cfg(feature = "rust")]
+use tree_sitter_rust::language as rust_language;
 
 mod script_parser;
 
@@ -15,12 +20,13 @@ use script_parser::{parse, ACommandOptions, Address, Options, Script};
 
 /// Execute query based on `query_patten` and `source_code`
 fn execute_query<'a>(
+    lang: Language,
     query_patten: String,
     source_code: &String,
     root_node: Node<'a>,
 ) -> anyhow::Result<HashMap<String, Vec<Node<'a>>>> {
     let mut cursor = QueryCursor::new();
-    let query = Query::new(language(), &query_patten).context("Failed to parse query")?;
+    let query = Query::new(lang, &query_patten).context("Failed to parse query")?;
     let capture_names = query.capture_names();
     let mut node_map: HashMap<String, Vec<Node>> = HashMap::new();
     for m in cursor.matches(&query, root_node, source_code.as_bytes()) {
@@ -178,6 +184,7 @@ fn print_node(
 
 /// Get script's ast and execute command in script
 fn execute_script(
+    lang: Language,
     parser: &mut Parser,
     script: Script,
     source_code: &mut String,
@@ -193,7 +200,7 @@ fn execute_script(
                 Some(Options::S(options)) => options,
                 _ => return Err(anyhow::format_err!("missing `s` command's options")),
             };
-            let mut node_map = execute_query(options.pattern, &source_code, root_node)?;
+            let mut node_map = execute_query(lang, options.pattern, &source_code, root_node)?;
             // Re-generate syntax tree
             let mut replace_table: HashMap<String, String> = HashMap::new();
             let placeholder = options.placeholder.unwrap_or(String::from("tbr"));
@@ -211,7 +218,7 @@ fn execute_script(
                 Some(Address::Pattern(p)) => p,
                 _ => return Err(anyhow::format_err!("missing pattern in {} command", cmd)),
             };
-            let mut node_map = execute_query(pattern, &source_code, root_node)?;
+            let mut node_map = execute_query(lang, pattern, &source_code, root_node)?;
             match cmd {
                 'd' => delete_node(tree.clone(), parser, &mut node_map, source_code)?,
                 'p' => print_node(&mut node_map, source_code)?,
@@ -241,7 +248,7 @@ fn main() -> anyhow::Result<()> {
                 .long("in-place")
                 .help("edit files in place"),
         )
-        .arg(arg!(--language ... "set language"));
+        .arg(arg!(--language ... "set language").default_value("c"));
     let matches = app.get_matches();
     let script = matches
         .value_of("SCRIPT")
@@ -257,9 +264,19 @@ fn main() -> anyhow::Result<()> {
     };
     // Init Parser
     let mut parser = Parser::new();
-    parser.set_language(language())?;
+    let lang = match matches.value_of("language") {
+        #[cfg(feature = "c")]
+        Some("c") => c_language(),
+        #[cfg(feature = "cpp")]
+        Some("cpp") => cpp_language(),
+        #[cfg(feature = "rust")]
+        Some("rust") => rust_language(),
+        Some(other) => return Err(anyhow::format_err!("you don't have {} parser", other)),
+        None => return Err(anyhow::format_err!("missing `--language` argument")),
+    };
+    parser.set_language(lang)?;
     // Start executing command
-    execute_script(&mut parser, script, &mut source_code)?;
+    execute_script(lang, &mut parser, script, &mut source_code)?;
     match matches.occurrences_of("in-place") {
         0 => println!("{}", source_code),
         1 => {
