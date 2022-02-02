@@ -2,7 +2,7 @@
 name = "tree-sed"
 version = "0.1.0"
 edition = "2021"
-description = "A alternative sed implementation by using tree-sitter"
+description = "Manpulate ast tree like `sed`."
 readme = "README.md"
 license = "LGPL-2.1-or-later"
 
@@ -10,6 +10,14 @@ license = "LGPL-2.1-or-later"
 
 [dependencies]
 tree-sitter = "0.20.2"
-tree-sitter-c = "0.20.1"
+tree-sitter-c = { version = "0.20.1", optional = true }
+tree-sitter-cpp = { version = "0.20.0", optional = true }
+tree-sitter-rust = { version = "0.20.0", optional = true }
 anyhow = "1.0"
 clap = { version = "3.0.10" }
+
+[features]
+default = ["c", "cpp", "rust"]
+c = ["tree-sitter-c"]
+cpp = ["tree-sitter-cpp"]
+rust = ["tree-sitter-rust"]
