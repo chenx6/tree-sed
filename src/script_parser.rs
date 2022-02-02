@@ -237,7 +237,7 @@ pub fn parse(script: &str) -> Result<Script> {
                 replace,
             }))
         }
-        'a' => {
+        'a' | 'i' => {
             consume_whitespace(&mut token, &mut tokenizer);
             let content = match token {
                 Some(Token::Char('\\')) => {

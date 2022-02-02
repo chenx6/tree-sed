@@ -20,7 +20,7 @@ $ cargo run -- 's/(call_expression
 - [ ] Implement more argument to compatible to `sed`
 - [ ] Implement more sed script's function
   - [ ] `s` command: `&` and `\1 \2 ...`, `g` option
-  - [x] `a` command: append content
+  - [x] `i`/`a` command: insert/append content
   - [x] `d` command: delete content
   - [x] `p` command: print content
 - [ ] Better document
