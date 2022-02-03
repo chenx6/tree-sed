@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 pub enum Address {
     Pattern(String),
     Range(u32, u32),
+    Single(u32),
 }
 
 pub struct SCommandOptions {
@@ -169,19 +170,22 @@ pub fn parse(script: &str) -> Result<Script> {
     let mut token = tokenizer.get_token();
     // Parse address (Optional)
     let address = match token {
-        Some(Token::Number(start)) => {
-            if let Some(Token::Char(ch)) = tokenizer.get_token() {
-                if ch != ',' {
-                    return Err(anyhow::format_err!("Missing ',' in [SCRIPT]"));
-                }
+        Some(Token::Number(start)) => match tokenizer.get_token() {
+            Some(Token::Char(',')) => {
+                let end = match tokenizer.get_token() {
+                    Some(Token::Number(end)) => end,
+                    _ => return Err(anyhow::format_err!("Missing end address in [SCRIPT]")),
+                };
+                token = tokenizer.get_token();
+                Some(Address::Range(start, end))
             }
-            let end = match tokenizer.get_token() {
-                Some(Token::Number(end)) => end,
-                _ => return Err(anyhow::format_err!("Missing end address in [SCRIPT]")),
-            };
-            token = tokenizer.get_token();
-            Some(Address::Range(start, end))
-        }
+            Some(Token::Symbol(s)) => {
+                // When address is single line, next token will be command
+                token = Some(Token::Symbol(s));
+                Some(Address::Single(start))
+            }
+            _ => return Err(anyhow::format_err!("address format error")),
+        },
         Some(Token::Char(ch)) if ch == '/' => {
             let pattern = tokenizer.get_sym('/');
             match pattern {
@@ -312,6 +316,8 @@ mod test {
             }
             _ => panic!("parse fail"),
         }
+        let result = parse("100s/aaa/bbb/").unwrap();
+        assert_eq!(result.address, Some(Address::Single(100)))
     }
 
     #[test]
