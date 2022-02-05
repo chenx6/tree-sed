@@ -7,19 +7,15 @@ pub enum Address {
     Single(u32),
 }
 
-pub struct SCommandOptions {
-    pub placeholder: Option<String>,
-    pub pattern: String,
-    pub replace: String,
-}
-
-pub struct ACommandOptions {
-    pub content: String,
-}
-
 pub enum Options {
-    S(SCommandOptions),
-    A(ACommandOptions),
+    S {
+        placeholder: Option<String>,
+        pattern: String,
+        replace: String,
+    },
+    A {
+        content: String,
+    },
 }
 
 /// Simulate sed's command format
@@ -235,11 +231,11 @@ pub fn parse(script: &str) -> Result<Script> {
                 Some(Token::Symbol(replace)) => replace,
                 _ => return Err(anyhow::format_err!("missing pattern")),
             };
-            Some(Options::S(SCommandOptions {
+            Some(Options::S {
                 placeholder,
                 pattern,
                 replace,
-            }))
+            })
         }
         'a' | 'i' => {
             consume_whitespace(&mut token, &mut tokenizer);
@@ -257,7 +253,7 @@ pub fn parse(script: &str) -> Result<Script> {
                 Some(Token::Symbol(s)) => s,
                 _ => return Err(anyhow::format_err!("missing content in a command")),
             };
-            Some(Options::A(ACommandOptions { content }))
+            Some(Options::A { content })
         }
         _ => None,
     };
@@ -292,9 +288,9 @@ mod test {
     fn test_basic_parse() {
         let result = parse("s/aaa/bbb/").unwrap();
         match result.options {
-            Some(Options::S(SCommandOptions {
+            Some(Options::S {
                 pattern, replace, ..
-            })) => {
+            }) => {
                 assert_eq!(pattern, String::from("aaa"));
                 assert_eq!(replace, String::from("bbb"));
             }
@@ -308,9 +304,9 @@ mod test {
         assert_eq!(result.address, Some(Address::Range(1, 2)));
         assert_eq!(result.command, 's');
         match result.options {
-            Some(Options::S(SCommandOptions {
+            Some(Options::S {
                 pattern, replace, ..
-            })) => {
+            }) => {
                 assert_eq!(pattern, String::from("aaa"));
                 assert_eq!(replace, String::from("bbb"));
             }
@@ -326,11 +322,11 @@ mod test {
         assert_eq!(result.address, Some(Address::Range(1, 2)));
         assert_eq!(result.command, 's');
         match result.options {
-            Some(Options::S(SCommandOptions {
+            Some(Options::S {
                 placeholder,
                 pattern,
                 replace,
-            })) => {
+            }) => {
                 assert_eq!(placeholder, Some(String::from("placeholder")));
                 assert_eq!(pattern, String::from("aaa"));
                 assert_eq!(replace, String::from("bbb"));
@@ -344,9 +340,9 @@ mod test {
         let query = r#"s/(argument_list (_) @tbr)/"Just Monika"/"#;
         let result = parse(query).unwrap();
         match result.options {
-            Some(Options::S(SCommandOptions {
+            Some(Options::S {
                 pattern, replace, ..
-            })) => {
+            }) => {
                 assert_eq!(pattern, String::from("(argument_list (_) @tbr)"));
                 assert_eq!(replace, String::from("\"Just Monika\""));
             }
@@ -373,7 +369,7 @@ mod test {
         let result = parse(script).unwrap();
         assert_eq!(result.command, 'a');
         match result.options {
-            Some(Options::A(ACommandOptions { content })) => {
+            Some(Options::A { content }) => {
                 assert_eq!(content, String::from("text"))
             }
             _ => panic!(""),
@@ -384,7 +380,7 @@ a long long text"#;
         let result = parse(script).unwrap();
         assert_eq!(result.command, 'a');
         match result.options {
-            Some(Options::A(ACommandOptions { content })) => {
+            Some(Options::A { content }) => {
                 assert_eq!(content, String::from("a long long text"))
             }
             _ => panic!(""),

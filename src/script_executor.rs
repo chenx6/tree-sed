@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Context;
 use tree_sitter::{InputEdit, Language, Node, Parser, Point, Query, QueryCursor, Tree};
 
-use crate::script_parser::{ACommandOptions, Address, Options, Script};
+use crate::script_parser::{Address, Options, Script};
 
 /// Execute query based on `query_patten` and `source_code`
 fn execute_query<'a>(
@@ -190,15 +190,19 @@ pub fn execute_script(
     let root_node = tree.root_node();
     match script.command {
         's' => {
-            let options = match script.options {
-                Some(Options::S(options)) => options,
+            let (placeholder, pattern, replace) = match script.options {
+                Some(Options::S {
+                    placeholder,
+                    pattern,
+                    replace,
+                }) => (placeholder, pattern, replace),
                 _ => return Err(anyhow::format_err!("missing `s` command's options")),
             };
-            let mut node_map = execute_query(lang, options.pattern, &source_code, root_node)?;
+            let mut node_map = execute_query(lang, pattern, &source_code, root_node)?;
             // Re-generate syntax tree
             let mut replace_table: HashMap<String, String> = HashMap::new();
-            let placeholder = options.placeholder.unwrap_or(String::from("tbr"));
-            replace_table.insert(placeholder, options.replace);
+            let placeholder = placeholder.unwrap_or(String::from("tbr"));
+            replace_table.insert(placeholder, replace);
             replace_source(
                 tree.clone(),
                 &mut parser,
@@ -218,7 +222,7 @@ pub fn execute_script(
                 'p' => print_node(&mut node_map, source_code)?,
                 'a' | 'i' => {
                     let content = match script.options {
-                        Some(Options::A(ACommandOptions { content })) => content,
+                        Some(Options::A { content }) => content,
                         _ => return Err(anyhow::format_err!("missing content in a command")),
                     };
                     append_content(
